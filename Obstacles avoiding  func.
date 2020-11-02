@@ -1,0 +1,111 @@
+function[bx,by,X,Y,Xsum,Goal]=barrier(point,point_next,C)
+Xo=[C(point,1),C(point,2)];%Starting position
+kexi=15;%Gravity gain coefficient 
+yita=20;%Replusion gain coefficient
+po=10;%When the distance between the obstacle and the vehicle is greater than this distance, the repulsion force is 0
+n_exp=2;%a constant greater than zero
+step=3;
+K=200;
+
+Xsum=[10 10;275.8,134.8];%This vector is (n + 1) * 2 dimensions, where [10,10] is the target position, and the rest is the position of the obstacle.
+n=size(Xsum,1)-1; 
+Xsum(1,:)=[C(point_next,1),C(point_next,2)];%Replace the target position with the coordinates of the next point
+Xk=Xo;%k=1, assign the starting coordinates of the car to Xk
+Goal=zeros(K,2);
+%***************main loop begins******************
+for k=1:K
+    Goal(k,1)=Xk(1);%save the coordinates of each point the car passes through.
+    Goal(k,2)=Xk(2);
+    %Call the calculation angle module
+    Theta=compute_angle(Xk,Xsum,n);%Theta is the calculated angle between the car and the obstacle, and the target and the x-axis. The angle is set in the counterclockwise direction
+    Angle=Theta(1);%Theta（1）
+    angle_at=Theta(1);
+    for i=1:n
+        angle_re(i)=Theta(i+1);
+    end
+    %Call the calculation gravity module
+    [Fatx,Faty]=compute_Attract(Xk,Xsum,kexi,Angle);%Two component values of the target's gravity on the vehicle in X, Y directions are calculated.
+    %Call the calculation repulsion module
+    [Frerxx,Freryy,Fataxx,Fatayy]=compute_repulsion(Xk,Xsum,yita,angle_at,angle_re,n,po,n_exp);%Two component values of the obstacle's repulsion on the vehicle in X, Y directions are calculated.
+    %Calculate the resultant force and direction
+    Fsumy=Faty+Freryy+Fatayy;%resultant force in y direction
+    Fsumx=Fatx+Frerxx+Fataxx;%resultant force in x direction
+    Fsum=sqrt(Fsumy^2+Fsumx^2);
+    Xnext(1)=Xk(1)+step*Fsumx/Fsum;
+    Xnext(2)=Xk(2)+step*Fsumy/Fsum;
+    Xk=Xnext;
+
+    if (abs(Xk(1)-Xsum(1,1))<0.1)&&(abs(Xk(2)-Xsum(1,2))<0.1)
+        break;        
+    end
+end
+K=k;
+Goal(K,1)=Xsum(1,1);
+Goal(K,2)=Xsum(1,2);
+%***********************************Draw obstacles, starting points, goals, path points*************************
+%画出路径
+Goal(all(Goal==0,2),:)=[];
+X=Goal(:,1); Y=Goal(:,2);
+
+bpoint=Xsum;bpoint([1],:)=[];
+bx=bpoint(:,1);
+by=bpoint(:,2);
+end
+
+%Calculate the angle vector of gravity, repulsion and x-axis
+function Y=compute_angle(X,Xsum,n)
+for i=1:n+1
+    deltaX(i)=Xsum(i,1)-X(1);
+    deltaY(i)=Xsum(i,2)-X(2);
+    r(i)=sqrt(deltaX(i)^2+deltaY(i)^2);
+    theta=sign(deltaY(i))*acos(deltaX(i)/r(i));
+    Y(i)=theta;   %Save each angle in the Y vector. The first element is the angle to the target, and the rest is the angle to the obstacle
+end
+end
+
+%Calculate gravity
+function [Fatx,Faty]=compute_Attract(X,Xsum,kexi,angle)
+Rat=(X(1)-Xsum(1,1))^2+(X(2)-Xsum(1,2))^2;
+rat=sqrt(Rat);%Distance between path point and target
+Fatx=kexi*rat*cos(angle);%angle=Y(1).
+Faty=kexi*rat*sin(angle);
+end
+
+function [Frerxx,Freryy,Fataxx,Fatayy]=compute_repulsion(X,Xsum,yita,angle_at,angle_re,n,po,n_exp)
+Rat=(X(1)-Xsum(1,1))^2+(X(2)-Xsum(1,2))^2;
+rat=sqrt(Rat);
+for i=1:n
+    Rre(i)=(X(1)-Xsum(i+1,1))^2+(X(2)-Xsum(i+1,2))^2;
+    rre(i)=sqrt(Rre(i));
+    R0=(Xsum(1,1)-Xsum(i+1,1))^2+(Xsum(1,2)-Xsum(i+1,2))^2; 
+    r0=sqrt(R0);
+    if rre(i)>po
+        Frerx(i)=0;
+        Frery(i)=0;
+        Fatax(i)=0;
+        Fatay(i)=0;
+    else
+        %if r0<Po
+        if rre(i)<po/2    %closed
+            Frer(i)=yita*(1/rre(i)-1/po)*(1/Rre(i))*(rat^n_exp);%Frep1 is repulsion
+            Fata(i)=n_exp*yita*((1/rre(i)-1/po)^2)*(rat^(1-n_exp))/2;%Frep2 is gravity       
+            %when the car is not close to the target, Fata(i)=0.  when the car is close to the target, the target will add a distance related gravity to the car
+            Frerx(i)=Frer(i)*cos(angle_re(i)+pi);%angle_re(i)=Y(i+1)
+            Frery(i)=Frer(i)*sin(angle_re(i)+pi);
+            Fatax(i)=Fata(i)*cos(angle_at);%angle_at=Y(1)
+            Fatay(i)=Fata(i)*sin(angle_at);
+        else
+            Frer(i)=yita*(1/rre(i)-1/po)*(1/Rre(i))*Rat;
+            Fata(i)=yita*((1/rre(i)-1/po)^2)*rat;       
+            Frerx(i)=Frer(i)*cos(angle_re(i)+pi);%angle_re(i)=Y(i+1)
+            Frery(i)=Frer(i)*sin(angle_re(i)+pi);
+            Fatax(i)=Fata(i)*cos(angle_at);%angle_at=Y(1)
+            Fatay(i)=Fata(i)*sin(angle_at);
+        end
+    end
+end
+Frerxx=sum(Frerx);
+Freryy=sum(Frery);
+Fataxx=sum(Fatax);
+Fatayy=sum(Fatay);
+end
