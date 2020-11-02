@@ -1,0 +1,161 @@
+function[Shortest_Time,Shortest_Length,Best_Route_1,L_best,L_avg,Shortest_Expense,mink,minm]=route(car1,Ni,N,D,Bat,Bat_alert,ET,LT,Demand,NCmax)
+%蚁群参数初始化
+Alpha = 2;    %Parameters of pheromone importance   
+Beta = 2;     %Parameters of heuristic factor importance    
+Rho = 0.6;   %Volatilization Coefficient of pheromone
+Q = 10;       %信息素增加强度系数
+a=0.2;        %超出时间窗早到的惩罚系数
+b=0.5;        %超出时间窗晚到的惩罚系数
+M = 50;       %蚂蚁数量和迭代次数
+Prab = 0.05;  %伪随机选择概率
+sevtime=20;   %装卸一吨货物需要20分钟
+Cap=1.7;      %车辆最大载重
+
+Tau=ones(N,N);            %Tau为信息素矩阵，行：前一个城市的标号；列：后一个城市的标号
+L_best=zeros(NCmax,1);    %各代最佳长度
+L_avg=zeros(NCmax,1);      %各代平均长度
+R_best=zeros(NCmax,2*Ni); %各代最佳路线
+ROUTES=cell(NCmax,M);     %用细胞结构存储每一代的每一只蚂蚁的爬行路线，创建100*50的矩阵
+Length=zeros(NCmax,M);         %用矩阵存储每一代的每一只蚂蚁的爬行路线长度
+Time=zeros(NCmax,M);
+Expense=zeros(NCmax,M);
+mink=1;  minm=1; minL=inf;  minE=inf;   %minT=inf;  
+
+for NC=1:NCmax                   
+    Tabu=zeros(M,Ni);     %存储到过的服务点（不包括车场和充电站）
+    for m=1:M
+        Cap_now=Cap;    Bat_now=Bat;   Dem_now=Demand;  
+        L=0;  t=0;  exp=0;
+        Path=zeros(1,2*Ni);%主要用于标明蚂蚁现在在哪个点（记录包括车场和充电站）
+        j_tabu=1;       
+        j_path=1;       
+        Tabu(m,1)=1;    %禁忌表起点位置为1
+        Path(1)=1;      %路径起点位置为1
+        y=0;
+        
+        while Tabu(m,Ni)==0
+%             visited=Tabu(m,:);
+%             visited=visited(visited>0)
+%             TO_VISIT=setdiff(3:N,visited)         %在集合论中，to_visit = (1:n) - visited
+            visited=find(Tabu(m,:)>0);                      %已访问城市
+            To_visit=zeros(1,(Ni-length(visited)));         %待访问城市加载表
+            P=To_visit;                                     %选择概率分布矩阵，用于随机选择下一服务点            
+            Jc=1;                                           
+            for i=car1
+                if isempty(find(Tabu(m,:)==i, 1))    %如果i不是已访问城市代号，就将i加入矩阵TO_VISIT中
+                    To_visit(Jc)=i;
+                    Jc=Jc+1;
+                end
+            end
+            x=To_visit==0;
+            To_visit(x)=[];  %去掉0
+            %%%%%%%=============每只蚂蚁按照选择概率遍历所有城市==================%%%%
+            recip_ETA=zeros(M,2*Ni);    %启发式矩阵
+            Cap_alert=max(Dem_now);
+            if Bat_now<Bat_alert    %如果电池存量小于警告量
+                L=L+D(2,Path(j_path));
+                t=t+D(2,Path(j_path))/25;
+                j_path=j_path+1;
+                Path(j_path)=2;%回到充电站
+                Bat_now=Bat;   %充满电
+                t=t+52;        %时间要加上充电时间，计算方法：60Ah*（1+损耗）/充电电流
+                y=y+1;
+%                 exp=exp+Bat;   %费用加上能量的耗损
+            end
+            if Cap_now<Cap_alert    %如果车载可容量小于警告量                
+                L=L+D(1,Path(j_path));
+                t=t+D(1,Path(j_path))/25+Cap*sevtime;
+                Bat_now=Bat_now-(recip_ETA(m,1)*83.3)/1500;
+                j_path=j_path+1;    
+                Path(j_path)=1;     %回到起点（即配送中心）
+                Cap_now=Cap;        
+            end
+            for i=1:length(To_visit)                         %待访问城市
+                recip_ETA(m,i)=D(Path(j_path),To_visit(1,i));%蚂蚁现在所在的点到下一个城市的距离
+                P(i)=(Tau(Path(j_path),To_visit(1,i))^Alpha)*((1/recip_ETA(m,i))^Beta); %概率计算公式中的分子
+            end
+            
+            temp_pra=rand;
+            if temp_pra<Prab                %如果满足伪随机选择概率，直接选择概率最大的
+                Select=find(max(P));
+            else
+                P=P/(sum(P));               %按照轮盘赌法选取下一个城市
+                Pcum=cumsum(P);             %求累积概率和：cumsum（[1 2 3])=1 3 6,目的在于使得Pcum的值总有大于rand的数
+                Select=find(Pcum>=rand);    %当累积概率和大于给定的随机数，则选择求和被加上的最后一个城市作为即将访问的城市
+            end
+            to_visit=To_visit(1,Select(1)); %待访问城市
+            j_tabu=j_tabu+1;
+            j_path=j_path+1;
+            Tabu(m,j_tabu)=to_visit;             
+            Path(j_path)=to_visit;
+            Cap_now=Cap_now-Demand(to_visit,:);
+            Dem_now(to_visit,:)=0;          %把这个城市的需求删除，为计算Cap_alert
+            L=L+recip_ETA(m,Select(1));     
+            Bat_now=Bat_now-(recip_ETA(m,Select(1))*83.3)/(25*60);   %60是由时换算成分钟
+            
+            if t<ET(to_visit)    %时间窗惩罚措施，早到和晚到都会增加费用
+                exp=exp+a*(ET(to_visit,1)-t);
+                t=t+ET(to_visit,1)-t;%早到需要等待
+            elseif t>LT(to_visit)
+                exp=exp+b*(t-LT(to_visit,1));%晚到不需要等待
+            end
+            t=t+sevtime*Demand(to_visit,1)+recip_ETA(m,Select(1))/25;%时间包括装卸货物和从上一点到此点的路程
+        end
+        L=L+D(Path(j_path),1);      %回到终点
+        t=t+D(Path(j_path),1)/25;
+        Bat_now=Bat_now-(D(Path(j_path),1)*83.3)/(25*60);
+        j_path=j_path+1;    
+        Path(j_path)=1;     %回到起点（即卸货点）
+        ROUTES{NC,m}=Path;   %把这条路径记录在元胞矩阵中
+        exp=exp+(t-52*y)*0.5+L*0.29*0.5*0.001;   %总体最优策略：综合考虑时间、用电量（能耗）和时间窗惩罚的综合
+        
+        %         if j_tabu==Ni
+        %             LENGTH(NC,m)=L;
+        %             TIME(NC,m)=time;
+        %             if time<minT
+        %                 mink=NC;minm=m;minT=time;
+        %             end
+        %             if L<minL
+        %                 minL=L;
+        %             end
+        %         else
+        %             LENGTH(NC,m)=0;
+        %         end
+        %寻找最小的费用
+        if j_tabu==Ni
+            Length(NC,m)=L;
+            Time(NC,m)=t;
+            Expense(NC,m)=exp;
+            if exp<minE
+                mink=NC;minm=m;minE=exp;
+            end
+            if L<minL
+                minL=L;
+            end
+        else
+            Length(NC,m)=0;
+        end    
+    end
+    
+    [minll,minmm]=min(Expense(NC,:));%找到这一代最小的值（信息素局部优化防止早熟）
+    L_best(NC)=minL;
+    %更新信息素
+    R_best(NC,:)=ROUTES{NC,minmm};
+    Delta_Tau=zeros(N,N); %Delta_Tau(i,j)表示所有蚂蚁留在第i个城市到第j个城市路径上的信息素增量
+    Cities=find(R_best(NC,:)>0);
+    for i=1:(length(Cities)-1)          %建立了完整路径后在释放信息素
+        x=R_best(NC,i);
+        y=R_best(NC,i+1);
+        Delta_Tau(x,y)=Delta_Tau(x,y)+Q/minll;
+        Delta_Tau(y,x)=Delta_Tau(y,x)+Q/minll;
+    end
+    Tau=(1-Rho).*Tau+Rho.*Delta_Tau;
+end
+L_avg=sum(Length,2)/M;
+Shortest_Length=Length(mink,minm);    %判断标准以费用最小为准
+Shortest_Time=Time(mink,minm);
+Shortest_Expense=minE;
+Best_Route=ROUTES{mink,minm};
+Best_Route=Best_Route(Best_Route>0);
+Best_Route_1=Best_Route-1;              %路线所有数字减一，从零开始
+end
