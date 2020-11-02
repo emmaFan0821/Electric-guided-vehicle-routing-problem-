@@ -1,0 +1,155 @@
+clc;clear;
+%% ==============Read data==============
+[xdata,textdata]=xlsread('datalist.xlsx'); %The first line is the coordinates of starting point and ending point, and the second line is the coordinates of charging station
+x_coordinate=xdata(:,2); %The second column is the abscissa
+y_coordinate=xdata(:,3); %The third column is the ordinate
+disp([num2str(xdata(2,2)), '   ',num2str(xdata(2,3))]);
+Demand=xdata(:,4);       %The fourth column is the demand
+ET=xdata(:,5);           %Lower limit of time window
+LT=xdata(:,6);           %Higher limit of time window
+C=[x_coordinate y_coordinate];  %customers coordinate matrix
+N=size(C,1);             %Number of customers
+%% ==============Calculating the distance matrix==============
+D=zeros(N,N);            
+for i=1:N
+    for j=1:N
+        if i~=j
+            D(i,j)=((C(i,1)-C(j,1))^2+(C(i,2)-C(j,2))^2)^0.5; %Calculate the distance between the two customers
+        else
+            D(i,j)=0;   
+        end
+        D(j,i)=D(i,j);  %The distance matrix is symmetric
+    end
+end
+Dmax=max(D(2,:));  %pick the farest from charging station for Bat_alert
+DDmax=max(max(D)); %for Bat_alert
+%% ==============The greedy algorithm is used to allocate customers to two vehicles==============
+d0=D(2,:);    
+[~,index]=sort(d0); %Sort the distance between the service point and the charging station
+x=find(index<3); 
+index(x)=[]; %Remove starting points 1 and 2
+service_num=round(length(index)/2); %The number of service points is divided into two parts
+car1=zeros(1,service_num); 
+car2=zeros(1,service_num);
+j=1;
+for i=1:length(index) 
+    if mod(i,2)==1
+        car1(j)=index(i);
+    elseif mod(i,2)==0
+        car2(j)=index(i);
+    end
+    j=j+1;
+end
+car1(car1==0) = [];
+car2(car2==0) = [];
+N1=length(car1)+1;
+N2=length(car2)+1;
+% [C1,N1]=citysort(xdata,car1);
+% [C2,N2]=citysort(xdata,car2);
+%% ==============Main==============
+Bat=60;     %The original capacity of the battery is 60 Ah
+NCmax=100;  %iteration times
+Bat_alert=(((Dmax+DDmax)/25)*83.3)/60;  %discharge current 83.3A = power / voltage
+[Shortest_Time1,Shortest_Length1,Best_Route1,L_best1,L_avg1,Shortest_Expense1,mink1,minm1]=route(car1,N1,N,D,Bat,Bat_alert,ET,LT,Demand,NCmax);
+[Shortest_Time2,Shortest_Length2,Best_Route2,L_best2,L_avg2,Shortest_Expense2,mink2,minm2]=route(car2,N2,N,D,Bat,Bat_alert,ET,LT,Demand,NCmax);
+if Shortest_Time1<=Shortest_Time2    %Comparing the traveling time of two vehicles, the longest is the total shortest time
+    Shortest_Time=Shortest_Time2;
+else
+    Shortest_Time=Shortest_Time1;
+end
+Shortest_Length=Shortest_Length1+Shortest_Length2;
+L_best=L_best1+L_best2;
+L_avg=L_avg1+L_avg2;
+Shortest_Expense=Shortest_Expense1+Shortest_Expense2;
+disp(['For the first car,', num2str(mink1), 'generation', num2str(minm1), 'ant costs the least, which is the best path']);
+%Best_Route1
+disp(['For the second car,', num2str(mink1), 'generation', num2str(minm1), 'ant costs the least, which is the best path']);
+%Best_Route2
+disp(['The minimum cost', num2str(Shortest_Expense)]);
+disp(['The corresponding time is', num2str(Shortest_Time), 'minutes, the total traveling distance is', num2str(Shortest_Length),'meters']);
+%% ==============Plotting==============
+figure(1)   %Map the shortest path
+clf;
+set(gcf,'Position',[247,62,900,600]);
+axis([0,450,-50,450]);
+title('Simulation path obtained by ant colony algorithm');
+line([25,425],[0,0],'color','k');line([425,425],[0,375],'color','k');line([425,25],[375,375],'color','k');line([25,25],[375,0],'color','k');
+hold on
+Best_Route1=Best_Route1+1;
+Best_Route2=Best_Route2+1;
+
+for j=1:(length(Best_Route1)-1)
+    point=Best_Route1(j);
+    point_next=Best_Route1(j+1);
+    [bx,by,X,Y,Xsum,Goal]=barrier(point,point_next,C);
+%%%%%%LINE presentation%%%%%%    
+    nn=size(Goal,1);
+    A=zeros(nn,nn);
+    for w=1:nn
+        for v=1:nn
+            if w+1==v
+                A(w,v)=1;
+            elseif v+1==w
+                A(w,v)=1;
+            else
+                A(w,v)=0;
+            end
+        end
+    end
+    gplot(A,Goal,'b')
+%%%%%%POINT presentation%%%%%% 
+%     plot(Xsum(1,1),Xsum(1,2),'v',0,0,'ms',X,Y,'.b');
+%%%%%%POINT animation%%%%%%
+%     num=size(X,1);
+%     for q=1:num
+%         plot(X(q,1),Y(q,1),'.b');
+%         pause(0.05)
+%     end
+%%%%%%%%COMET animation%%%%%%%%
+%     X=Goal(:,1); Y=Goal(:,2);
+%     comet(X,Y)
+%     hold on
+end
+for j=1:(length(Best_Route2)-1)
+    point=Best_Route2(j);
+    point_next=Best_Route2(j+1);
+    [bx,by,X,Y,Xsum,Goal]=barrier(point,point_next,C);
+%%%%%%LINE presentation%%%%%%    
+    nn=size(Goal,1);
+    A=zeros(nn,nn);
+    for w=1:nn
+        for v=1:nn
+            if w+1==v
+                A(w,v)=1;
+            elseif v+1==w
+                A(w,v)=1;
+            else
+                A(w,v)=0;
+            end
+        end
+    end
+    gplot(A,Goal,'r')
+end
+scatter(bx,by,200);
+grid on
+hold on
+text(C(1,1),C(1,2),'  Start point/End point(0)');
+text(C(2,1),C(2,2),'  Charging station(1)');
+text(10,390,['Car NO.1（blue）： ' num2str(Best_Route1-1)]);
+text(240,390,['Car NO.2（red）： ' num2str(Best_Route2-1)]);
+for i =3:size(C,1)
+    text(C(i,1),C(i,2),['   ' num2str(i-1)]);
+end
+xlabel('Customer abscissa'); ylabel('Customer ordinate');
+
+figure(2)   %Draw the curve of iterative convergence
+clf;
+title('Average path length and shortest path length of each cycle');
+legend('FontName','Times New Roman','FontSize',7,'LineWidth',1.5);
+x=linspace(0,NCmax,NCmax);
+y1=L_best(:,1);
+y2=L_avg(:,1);
+[AX]=plotyy(x,y1,x,y2,@plot);
+xlabel('iteration times','fontsize',16); 
+set(get(AX(1),'ylabel'),'string', 'Shortest path length','fontsize',16);
+set(get(AX(2),'ylabel'),'string', 'Average path length','fontsize',16);
